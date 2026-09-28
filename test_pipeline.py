@@ -222,6 +222,56 @@ def test_generator_percorre_a_escada_de_fallback():
 
 
 # --------------------------------------------------------------------------- #
+# Modo manual (vídeos gerados no app do Gemini/Flow)
+# --------------------------------------------------------------------------- #
+def test_prompt_manual_e_um_bloco_unico_com_exclusoes():
+    """O app não tem campo de prompt negativo: as exclusões vão no próprio texto."""
+    from run_pipeline import manual_prompt
+
+    texto = manual_prompt("A02", "dor_intensa")
+    assert texto.startswith(prompts_data.build_prompt("A02", "dor_intensa"))
+    assert "AVOID: " in texto and "open mouth" in texto
+
+
+def test_exportacao_gera_um_prompt_por_clipe_e_checklist():
+    from run_pipeline import export_prompts
+
+    with tempfile.TemporaryDirectory() as tmp:
+        settings = load_settings({"work_dir": Path(tmp) / "build", "actors": ["A03"]})
+        index = export_prompts(settings, Path(tmp) / "prompts")
+        arquivos = sorted(p.name for p in (Path(tmp) / "prompts").glob("A03_*.txt"))
+        assert len(arquivos) == 5
+        checklist = index.read_text(encoding="utf-8")
+        assert "A03_basal_raw.mp4" in checklist and "--manual-raw" in checklist
+
+
+def test_saida_de_dry_run_nunca_passa_por_concluida_em_execucao_real():
+    from run_pipeline import already_done, prompt_fingerprint
+
+    prompt = prompts_data.build_prompt("A01", "basal")
+    with tempfile.TemporaryDirectory() as tmp:
+        settings = load_settings({"work_dir": Path(tmp)})
+        out = settings.actor_out_dir("A01")
+        out.mkdir(parents=True)
+        (out / "basal.mp4").write_bytes(b"x")
+        (out / "basal.jpg").write_bytes(b"x")
+        manifest = {"clips": {"basal": {
+            "prompt_sha256": prompt_fingerprint(prompt),
+            "generation": {"model": "(dry-run)"},
+            "video": {"file": "basal.mp4"},
+            "poster": {"file": "basal.jpg"},
+        }}}
+        assert already_done(settings, manifest, "A01", "basal", prompt) is None
+        settings.dry_run = True
+        assert already_done(settings, manifest, "A01", "basal", prompt) is not None
+
+
+def test_modo_manual_dispensa_a_chave_da_api():
+    settings = load_settings({"google_api_key": "", "manual_raw": True, "drive_enabled": False})
+    assert not any("GOOGLE_API_KEY" in p for p in settings.validate())
+
+
+# --------------------------------------------------------------------------- #
 # Planilha
 # --------------------------------------------------------------------------- #
 def test_colunas_obrigatorias_presentes_e_na_ordem():

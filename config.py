@@ -130,6 +130,9 @@ class Settings:
     states: List[str] = field(default_factory=list)
     force: bool = False
     dry_run: bool = False
+    # Modo manual: os brutos são gerados à mão no app do Gemini/Flow (consumindo
+    # a assinatura do usuário) e salvos em raw/; o Veo via API nunca é chamado.
+    manual_raw: bool = False
     fail_fast: bool = False
     timezone: str = field(default_factory=lambda: _env_str("TIMEZONE", "America/Sao_Paulo"))
     log_level: str = field(default_factory=lambda: _env_str("LOG_LEVEL", "INFO"))
@@ -150,6 +153,10 @@ class Settings:
     def actor_out_dir(self, actor_id: str) -> Path:
         return self.out_dir / actor_id
 
+    def raw_path(self, actor_id: str, state_id: str) -> Path:
+        """Onde o MP4 bruto de um clipe mora — gerado pela API ou salvo à mão."""
+        return self.raw_dir / f"{actor_id}_{state_id}_raw.mp4"
+
     def ensure_dirs(self) -> None:
         for path in (self.work_dir, self.raw_dir, self.out_dir, self.log_dir):
             path.mkdir(parents=True, exist_ok=True)
@@ -159,7 +166,7 @@ class Settings:
         """Retorna a lista de problemas de configuração (vazia = tudo certo)."""
         problems: List[str] = []
 
-        if not self.dry_run and not self.google_api_key:
+        if not self.dry_run and not self.manual_raw and not self.google_api_key:
             problems.append(
                 "GOOGLE_API_KEY não definida — necessária para chamar o Veo "
                 "(use --dry-run para testar o pipeline sem gerar vídeos)."

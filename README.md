@@ -122,10 +122,36 @@ python run_pipeline.py --list
 python run_pipeline.py --print-prompt A03 dispneia
 ```
 
+### Modo manual — gerar pelo app do Gemini com a sua assinatura
+
+A API do Veo é cobrada no projeto do Google Cloud da chave, **à parte** da
+assinatura do Gemini (Google AI Pro/Ultra). Os créditos da assinatura só valem
+dentro do app do Gemini/Flow, e nenhuma forma de login faz uma chamada de API
+consumi-los. Se o senhor prefere gastar a assinatura, o pipeline aceita que a
+**geração** seja feita à mão no app e automatiza **todo o resto**:
+
+```bash
+# 1. Exporta um prompt pronto para colar por clipe + checklist com os destinos
+python run_pipeline.py --export-prompts          # → prompts_export/
+
+# 2. No app do Gemini/Flow: cole o conteúdo de cada .txt, gere, baixe o MP4 e
+#    salve como build/raw/<Ator>_<estado>_raw.mp4 (ex.: build/raw/A01_basal_raw.mp4)
+
+# 3. Processa tudo o que já estiver na pasta — sem chave de API
+python run_pipeline.py --manual-raw
+```
+
+Pode baixar aos poucos: clipes sem bruto ficam como `❌ Falha` com a instrução
+exata de qual prompt usar e onde salvar, e entram na próxima execução. O vídeo
+do app pode vir em 16:9 ou 9:16, 720p ou 1080p, com ou sem áudio: o
+pós-processamento sempre entrega 720×720, 24 fps e mudo.
+
 ### Opções
 
 | Flag                         | Efeito                                                       |
 | ---------------------------- | ------------------------------------------------------------ |
+| `--manual-raw`               | Não chama a API: usa brutos salvos à mão em `build/raw/`.    |
+| `--export-prompts [DIR]`     | Exporta os prompts para colar no app + checklist, e sai.     |
 | `--actors A01 …`             | Restringe as personas (padrão: todas).                       |
 | `--states basal …`           | Restringe os estados (padrão: todos).                        |
 | `--dry-run`                  | Sintetiza clipes locais; não chama o Veo.                    |
@@ -171,7 +197,7 @@ No Drive, espelhado em `medical-assets/ectoscopia/A01..A04/`.
 | `prompts_data.py`  | Elenco, matriz de estados e composição dos prompts.                 |
 | `config.py`        | Configuração por ambiente + validação antecipada.                   |
 | `utils.py`         | Logging, retentativa com backoff, barra de progresso.               |
-| `test_pipeline.py` | 19 testes de fumaça, sem rede e sem credenciais.                    |
+| `test_pipeline.py` | 23 testes de fumaça, sem rede e sem credenciais.                    |
 
 ---
 
@@ -333,7 +359,7 @@ python test_pipeline.py      # standalone, sem dependências extras
 pytest -q test_pipeline.py   # se preferir pytest
 ```
 
-19 testes, sem rede e sem credenciais, cobrindo: integridade da matriz de 20
+23 testes, sem rede e sem credenciais, cobrindo: integridade da matriz de 20
 prompts, presença das quatro regras clínicas em 20/20, ausência de contradição
 postural (direções de estado que digam "sentado" quebrariam a `A03`, que está
 em leito), aritmética do filtergraph de loop, classificação de erros

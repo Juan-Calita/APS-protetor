@@ -8,6 +8,7 @@ drive_token.json
 
 # --- Artefatos do pipeline --------------------------------------------------
 build/
+prompts_export/
 controle_producao_ectoscopia.xlsx
 controle_producao_ectoscopia.parcial.xlsx
 *.corrompido.xlsx

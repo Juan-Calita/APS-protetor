@@ -154,6 +154,58 @@ def prompt_fingerprint(prompt: str) -> str:
     return hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
 
 
+# --------------------------------------------------------------------------- #
+# Modo manual: exportação dos prompts para o app do Gemini/Flow
+# --------------------------------------------------------------------------- #
+def manual_prompt(actor_id: str, state_id: str) -> str:
+    """Prompt em bloco único para colar no app.
+
+    O app de consumidor não tem campo de prompt negativo, então as exclusões
+    vão no fim do próprio texto, como uma cláusula AVOID.
+    """
+    return (
+        f"{prompts_data.build_prompt(actor_id, state_id)}\n"
+        f"AVOID: {prompts_data.NEGATIVE_PROMPT}."
+    )
+
+
+def export_prompts(settings: Settings, export_dir: Path) -> Path:
+    """Escreve um .txt por clipe + um LEIA-ME com o checklist e os destinos."""
+    actors = settings.actors or prompts_data.ACTOR_ORDER
+    states = settings.states or prompts_data.STATE_ORDER
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    index_lines = [
+        "PRODUÇÃO MANUAL — ECTOSCOPIA CLÍNICA",
+        "=" * 60,
+        "",
+        "Para cada clipe abaixo:",
+        "  1. Abra o app do Gemini (ou o Flow) com sua conta e escolha gerar vídeo (Veo).",
+        "  2. Se houver opção, use proporção 16:9 (ou 1:1) e a maior duração disponível.",
+        "  3. Cole o conteúdo inteiro do arquivo .txt do clipe e gere.",
+        "  4. Baixe o MP4 e salve EXATAMENTE com o nome/caminho indicado.",
+        "",
+        "Depois, rode:  python run_pipeline.py --manual-raw",
+        "O pipeline faz sozinho o loop, o recorte 720x720, o pôster, os hashes,",
+        "o upload para o Drive e a planilha. Clipes sem bruto ficam como ❌ Falha",
+        "e são processados na próxima execução, assim que o arquivo aparecer.",
+        "",
+        "=" * 60,
+        "",
+    ]
+
+    for actor_id, state_id in prompts_data.iter_matrix(actors, states):
+        target = settings.raw_path(actor_id, state_id)
+        clip_file = export_dir / f"{actor_id}_{state_id}.txt"
+        clip_file.write_text(manual_prompt(actor_id, state_id) + "\n", encoding="utf-8")
+        mark = "[x]" if target.is_file() else "[ ]"
+        index_lines.append(f"{mark} {actor_id}/{state_id:<17} prompt: {clip_file.name:<28} salvar como: {target}")
+
+    index = export_dir / "LEIA-ME.txt"
+    index.write_text("\n".join(index_lines) + "\n", encoding="utf-8")
+    return index
+
+
 def already_done(
     settings: Settings, manifest: Dict[str, object], actor_id: str, state_id: str, prompt: str
 ) -> Optional[Dict[str, object]]:
@@ -162,6 +214,11 @@ def already_done(
         return None
     entry = (manifest.get("clips") or {}).get(state_id)
     if not isinstance(entry, dict):
+        return None
+    generated_by = (entry.get("generation") or {}).get("model")
+    if generated_by == "(dry-run)" and not settings.dry_run:
+        # Um clipe de teste nunca pode passar por concluído numa execução real.
+        LOG.debug("%s/%s: saída atual veio de --dry-run — processando de verdade.", actor_id, state_id)
         return None
     if entry.get("prompt_sha256") != prompt_fingerprint(prompt):
         LOG.debug("%s/%s: prompt mudou — regerando.", actor_id, state_id)
@@ -227,16 +284,34 @@ def process_one(
 
     tracker.update(actor_id, state_id, RowUpdate(status=STATUS_RUNNING))
 
-    raw_path = settings.raw_dir / f"{actor_id}_{state_id}_raw.mp4"
+    raw_path = settings.raw_path(actor_id, state_id)
     out_dir = settings.actor_out_dir(actor_id)
     mp4_path = out_dir / f"{state_id}.mp4"
     jpg_path = out_dir / f"{state_id}.jpg"
 
     # ---- 1. Geração ------------------------------------------------------
     progress.set_stage(f"{label} · gerando")
-    if settings.dry_run:
+    source_path = raw_path
+    raw_ready =raw_path.is_file() and raw_path.stat().st_size > 0
+    if raw_ready and not settings.force:
+        # Bruto já presente: salvo à mão (modo manual) ou sobra de uma execução
+        # anterior. Não há por que pagar a geração de novo.
+        LOG.info("%s: bruto encontrado em %s — geração dispensada.", label, raw_path)
+        gen_meta = {
+            "model": "(manual)" if settings.manual_raw else "(bruto reaproveitado)",
+            "source": str(raw_path.name),
+        }
+    elif settings.manual_raw:
+        raise FileNotFoundError(
+            f"bruto ausente. Gere o clipe no app do Gemini/Flow com o prompt de "
+            f"prompts_export/{actor_id}_{state_id}.txt e salve o MP4 como {raw_path}"
+        )
+    elif settings.dry_run:
+        # O sintético vai para um nome próprio: se fosse gravado em raw_path,
+        # uma execução real posterior o confundiria com um bruto de verdade.
         LOG.info("%s: --dry-run — sintetizando clipe local (Veo não é chamado).", label)
-        synth_raw_clip(settings, raw_path, seed=index)
+        source_path = settings.raw_dir / f"{actor_id}_{state_id}_synth.mp4"
+        synth_raw_clip(settings, source_path, seed=index)
         gen_meta = {
             "model": "(dry-run)",
             "aspect_ratio": "16:9",
@@ -258,7 +333,7 @@ def process_one(
 
     # ---- 2. Pós-processamento -------------------------------------------
     progress.set_stage(f"{label} · ffmpeg")
-    processed: ProcessResult = process_clip(settings, raw_path, mp4_path, jpg_path)
+    processed: ProcessResult = process_clip(settings, source_path, mp4_path, jpg_path)
     LOG.info(
         "%s: %s %.1f KB (%.2fs, crf %d) · pôster %.1f KB (q%d)",
         label, mp4_path.name, processed.mp4_kb, processed.duration_seconds,
@@ -375,7 +450,9 @@ def run(settings: Settings) -> RunSummary:
         LOG.warning("Upload para o Google Drive desabilitado (--skip-drive).")
         folders = {actor_id: "" for actor_id in actors}
 
-    generator = VeoGenerator(settings) if not settings.dry_run else None
+    generator = (
+        VeoGenerator(settings) if not (settings.dry_run or settings.manual_raw) else None
+    )
 
     summary = RunSummary()
     progress = Progress(len(pairs), desc="Ectoscopia")
@@ -446,6 +523,8 @@ def _banner(settings: Settings, actors: Sequence[str], states: Sequence[str], to
     mode = []
     if settings.dry_run:
         mode.append("DRY-RUN (sem Veo)")
+    if settings.manual_raw:
+        mode.append(f"MANUAL (brutos em {settings.raw_dir})")
     if not settings.drive_enabled:
         mode.append("sem Drive")
     if settings.force:
@@ -538,6 +617,17 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Não chama o Veo: sintetiza clipes locais para validar todo o resto.",
     )
     parser.add_argument(
+        "--manual-raw", action="store_true",
+        help=(
+            "Não chama a API do Veo: usa brutos gerados à mão no app do Gemini/Flow "
+            "(com a sua assinatura) e salvos em <work-dir>/raw/<Ator>_<estado>_raw.mp4."
+        ),
+    )
+    parser.add_argument(
+        "--export-prompts", nargs="?", const="prompts_export", metavar="DIR",
+        help="Exporta um prompt pronto para colar por clipe + checklist, e sai.",
+    )
+    parser.add_argument(
         "--force", action="store_true", help="Regera mesmo os clipes já concluídos."
     )
     parser.add_argument(
@@ -583,6 +673,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "excel_path": args.excel_path,
         "veo_model": args.model,
         "dry_run": args.dry_run or None,
+        "manual_raw": args.manual_raw or None,
         "force": args.force or None,
         "fail_fast": args.fail_fast or None,
         "log_level": args.log_level,
@@ -591,6 +682,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         overrides["drive_enabled"] = False
 
     settings = load_settings(overrides)
+
+    if args.export_prompts:
+        index = export_prompts(settings, Path(args.export_prompts))
+        settings.raw_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Prompts exportados em {Path(args.export_prompts).resolve()}")
+        print(f"Checklist: {index.resolve()}")
+        print(f"Salve os vídeos baixados em: {settings.raw_dir.resolve()}")
+        return 0
+
     setup_logging(settings.log_level, settings.log_dir / "pipeline.log")
 
     problems = settings.validate()
