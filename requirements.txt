@@ -1,0 +1,28 @@
+# ---------------------------------------------------------------------------
+# Pipeline de ectoscopia clínica — Veo 3.1 → FFmpeg → Google Drive → Planilha
+#
+#   python -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt
+#
+# Dependência externa NÃO-Python: FFmpeg ≥ 5.0 (ffmpeg + ffprobe no PATH).
+#   Debian/Ubuntu : sudo apt-get install -y ffmpeg
+#   macOS         : brew install ffmpeg
+#   Windows       : winget install Gyan.FFmpeg
+# ---------------------------------------------------------------------------
+
+# --- Geração de vídeo (Google Veo 3.1) -------------------------------------
+google-genai>=1.20.0
+
+# --- Google Drive ----------------------------------------------------------
+google-api-python-client>=2.140.0
+google-auth>=2.34.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.1        # necessário apenas para DRIVE_AUTH_MODE=oauth
+
+# --- Planilha de controle --------------------------------------------------
+openpyxl>=3.1.5                    # backend Excel (.xlsx)
+gspread>=6.1.2                     # backend Google Sheets
+
+# --- Conveniências ---------------------------------------------------------
+python-dotenv>=1.0.1               # carrega o .env automaticamente
+tqdm>=4.66.5                       # barra de progresso (há fallback se ausente)

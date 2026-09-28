@@ -1,0 +1,33 @@
+# --- Segredos (NUNCA versionar) --------------------------------------------
+.env
+service_account.json
+client_secret.json
+drive_token.json
+*credentials*.json
+*.pem
+
+# --- Artefatos do pipeline --------------------------------------------------
+build/
+controle_producao_ectoscopia.xlsx
+controle_producao_ectoscopia.parcial.xlsx
+*.corrompido.xlsx
+*.mp4
+*.jpg
+*.jpeg
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- SO / editores ----------------------------------------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
